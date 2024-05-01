@@ -1,8 +1,8 @@
 ﻿# Marketing-Analytics_Survival-Analysis
 
-Third Homework of DS223 Marketing Analytics course at American University of Armenia
-Professor: Karen Hovhannisyan
-Student: Nare Stepanyan
+Third Homework of DS223 Marketing Analytics course at American University of Armenia  
+Professor: Karen Hovhannisyan  
+Student: Nare Stepanyan  
 
 The project was done using the R programming language. 
 
