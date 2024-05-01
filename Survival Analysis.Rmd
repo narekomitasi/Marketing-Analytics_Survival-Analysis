@@ -1,0 +1,304 @@
+---
+title: "Marketing Analytics HW3"
+author: "Nare Stepanyan"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr) 
+library(knitr)
+library(zoo)
+library(survival)
+library(simsurv) 
+library(survminer)
+library(pec)
+library(SurvRegCensCov)
+library(flexsurv) 
+library(mstate)
+library(igraph)
+library(viridis)
+library(RColorBrewer)
+```
+
+```{r, include=FALSE}
+telco <- read.csv('telco.csv')
+summary(telco)
+```
+
+```{r}
+head(telco)
+```
+
+
+```{r, include=FALSE}
+# Data preparation
+telco$churn<-ifelse(telco$churn=='Yes',1,0)
+telco$marital <- as.factor(telco$marital)
+telco$ed <- as.factor(telco$ed)
+telco$retire <- as.factor(telco$retire)
+telco$gender <- as.factor(telco$gender)
+telco$voice <- as.factor(telco$voice)
+telco$internet <- as.factor(telco$internet)
+telco$forward <- as.factor(telco$forward)
+telco$custcat <- as.factor(telco$custcat)
+```
+
+```{r, include=FALSE}
+surv_obj <- Surv(time = telco$tenure, event = telco$churn)
+fit_aft_model <- function(dist) {
+  model <- survreg(surv_obj ~ age + marital + address + income + ed + retire + gender + voice + internet + forward + custcat, data = telco, dist = dist)
+  return(model)
+}
+```
+
+
+```{r, include=FALSE}
+distributions <- names(survreg.distributions)
+```
+
+
+```{r, include=FALSE}
+models <- lapply(distributions, fit_aft_model)
+```
+
+```{r, include=FALSE}
+new_data <- data.frame(
+  age = mean(telco$age), 
+  marital = as.factor(names(which.max(table(telco$marital)))),
+  address = mean(telco$address), 
+  income = mean(telco$income), 
+  ed = as.factor(names(which.max(table(telco$ed)))),
+  retire = as.factor(names(which.max(table(telco$retire)))),
+  gender = as.factor(names(which.max(table(telco$gender)))),
+  voice = as.factor(names(which.max(table(telco$voice)))),
+  internet = as.factor(names(which.max(table(telco$internet)))),
+  forward = as.factor(names(which.max(table(telco$forward)))),
+  custcat = as.factor(names(which.max(table(telco$custcat)))),
+  tenure = median(telco$tenure)
+)
+```
+
+
+```{r, include=FALSE}
+survival_curves<- function(models,dist) {
+      probs = seq(.1,.9,length = 9)
+      all_data <- data.frame()
+  # Iterate through models and add to the ggplot object
+  for (i in seq_along(models)) {
+      probs = seq(.1,.9,length = 9)
+  
+      # Predict survival probabilities using the fitted model
+      pred_surv <- predict(models[[i]], type = "quantile", p = 1-probs, newdata = new_data)
+      
+      # Combine survival data with model data
+      data <- data.frame(Time = pred_surv, Probabilities =probs, Distribution = dist[i])
+      
+      all_data <- rbind(all_data, data)
+  }
+      
+      return(all_data)
+ }
+```
+
+
+```{r, include=FALSE}
+survival_curve <- survival_curves(models, distributions)
+survival_curve
+```
+
+
+
+## Parametric Models
+Now let's plot the survival curves of all distributions and make a decision. From the plot we can see that the best survival curve is the lognormal curve.
+
+
+```{r, out.height='55%', echo = FALSE}
+colors <- brewer.pal(n = 10, name = "Paired")
+plt <- ggplot() +
+    geom_line(data = survival_curve, aes(x = Time, y = Probabilities, color = Distribution), size = 1)+
+    theme_minimal() +
+    xlab("Time") +
+    ylab("Survival Probability") +
+    ggtitle("Survival Curves for Different Distributions") +
+    theme(legend.position = "bottom") +
+    geom_abline(intercept = 0, slope = 0, linetype = "dashed", color = "gray")
+  
+plt
+```
+
+
+**Figure 1**
+
+To select the best model, we can consider other statistical measures like AIC and BIC. The top-performing models have the lowest AIC and BIC values. From the results, we find that the model with a lognormal distribution has the minimum AIC (2951.151) and BIC (3039.491). Therefore, we choose the model with a lognormal distribution as our final option.
+
+
+```{r, echo = FALSE}
+decision_data <- data.frame()
+for(i in seq_along(models)){
+  loglikelihood<- models[[i]]$loglik
+  aic<- AIC(models[[i]])
+  bic<- BIC(models[[i]])
+  data <- data.frame(Loglikelihood = loglikelihood, AIC = aic, BIC = bic, Distribution = distributions[i])
+  decision_data <- rbind(decision_data, data)
+}
+min(decision_data$BIC)
+min(decision_data$AIC)
+decision_data
+```
+
+\newpage  
+Let's see which features are useful for the model. 
+For the first model, we'll incorporate all available features and assess their significance. We've selected a significance level of $\alpha = 0.1$ for this analysis.
+
+```{r, echo=FALSE}
+feauture_testing_model <- survreg(surv_obj ~ age + marital + address + income + ed + retire + gender + voice + internet + forward + custcat, data = telco, dist = "lognormal")
+s = summary(feauture_testing_model)
+s
+s$table[,4]<0.10
+```
+
+
+From the results, we can see that the p-values of certain features exceed 0.1. These features include forward, gender, income, and retirement. To construct the best model and ensure sound decision-making without including non-informative features, I removed these mentioned features from the model. The regression summary of the final model is as follows.
+
+```{r , echo=FALSE}
+final_model <- survreg(surv_obj ~ age + marital + address  + ed  + voice + internet + custcat, data = telco, dist = "lognormal")
+summary(final_model)
+```
+
+```{r}
+exp(coef(final_model))
+```
+
+For the interpretation of the coefficients we should look at the exponents of the coefficients which show the hazard ratio for each predictor.
+Coefficient of age is positive and HR is 1.0374031 which indicates that for each additional year of life of customer there is a 3% increase of hazard.  
+HR of marital Unmarried is 0.6369217 which indicates that single people have approximately 36 % lower hazard compared to married.  
+Education level Hazard is compared to the College Degree, the target group.  
+HR of did not complete high school is 1.3815083 which means that the mentioned group has 38 % higher hazard compare to the target group.  
+HR of did high school is 1.3277135 which means that the mentioned group has 32 % higher hazard compare to target group.  
+HR of did post-Undergrad degree is 0.9929849 which means that the mentioned group has approximately 1 % lower hazard compare to the target group.  
+HR of did some college is 1.2977840 which means that the mentioned group has 29 % higher hazard compared to the target group.  
+HR of Voice yes is 0.6497821 which means that the mentioned group has approximately 35% lower hazard compared to the Voice No group.  
+HR of Internet yes is 0.4631241 which means that the mentioned group has approximately 55% lower hazard compared to the internet No group.  
+Customer category is compared to the Basic service, the target group.  
+HR of E-service is 2.8972934 which means that the mentioned group has 189 % higher hazard compared to the target group.  
+HR of Plus Service is 2.2311654 which means that the mentioned group has 123 % higher hazard compared to the target group.  
+HR of Total Service is 2.8832641 which means that the mentioned group has 188 % higher hazard compared to the target group.  
+
+
+
+\newpage
+## CLV
+Based on the best model I made predictions and calculated CLV. 
+For Calculating CLV I used the formula 
+$$CLV = MM \sum_{i=1}^{t} \frac{p_{i}}{(1+r/12)^{i-1}}$$
+
+Assumption for monthly margin is 1300 AMD and assumption for iscount rate(r) is 10 % (retrieved from the slides).
+
+```{r, include=FALSE}
+predictions <- predict(final_model, type = "response", newdata = telco)
+str(predictions)
+```
+
+```{r, include=FALSE}
+predictions_data <- data.frame((predictions))
+predictions_data
+```
+
+
+```{r , include=FALSE}
+sequence = seq(1,length(colnames(predictions_data)),1)
+MM = 1300 #assumption on monthly margin taken from the slides
+r = 0.1 # assumption on discount rate taken from the slides
+for (num in sequence) {
+predictions_data[,num] = predictions_data[,num]/(1+r/12)^(sequence[num]-1)
+}
+predictions_data
+```
+
+
+```{r, echo=FALSE}
+predictions_data$CLV = MM*rowSums(predictions_data)
+summary(predictions_data$CLV)
+```
+
+```{r}
+head(predictions_data)
+```
+
+
+```{r, echo=FALSE}
+examine_data <- head(predictions_data, 24)
+
+ggplot(examine_data,aes(x=CLV))+labs(title = "CLV Distribution")+
+geom_histogram() #+ scale_x_continuous(labels = scales::label_number_si())
+```
+
+\newpage 
+
+Now, let's examine CLV-s and compare them based on different features. To simplify our analysis, I've focused on the first 24 months.
+
+From Figure 2, we observe variations in CLV-s between males and females. It's evident that males tend to make fewer substantial purchases during the initial stages of their customer journey compared to females. However, as time progresses, males demonstrate a pattern of consistent and higher-value purchases in contrast to females. While female CLV-s exhibit spikes, male CLV-s do not display significant fluctuations. Additionally, both males and females typically make one significant purchase initially followed by consistent smaller purchases thereafter.
+
+```{r, echo=FALSE}
+options(scipen = 999)
+telco$CLV = predictions_data$CLV
+examine_data_telco <- head(telco, 24)
+ggplot(examine_data_telco, aes(x = CLV, color = gender))+
+labs(title = "CLV Density By Gender")+
+geom_density()
+```
+
+**Figure: 2**
+
+\newpage
+On the figure three I am comparing CLV's of Marries and Unmarried people. We can see that Single people tend to make Big purchases at the start of their journey as a customer, but later on that disengage and do not make consistent purchases of high value. On the other side married people after initial big purchase, are making consistent little purchases later. The Spike on the end of the graph for unmarried people can be explained by them, not using serivices for long time and later on reengaging with again.
+```{r, echo=FALSE}
+options(scipen = 999)
+ggplot(examine_data_telco,aes(x=CLV, color=marital))+
+labs(title = "CLV Density By Marital Status")+
+geom_density()
+```
+**Figure: 3**
+
+\newpage
+
+For the third aspect of comparison, let's examine the education levels of customers, as depicted in the fourth figure. It's evident that customers who did not complete high school exhibit the most consistent purchasing behavior, consistently making purchases over time. On the other hand, customers with post-undergraduate degrees are more likely to make high-value purchases initially but do not continue this trend over time. This behavior may be attributed to their higher incomes, allowing them to opt for premium products from the outset. The curve for individuals who did not complete high school suggests inconsistent purchasing patterns, indicating a propensity to experiment with various products and services. Customers with high school degrees demonstrate a similar pattern to those with post-undergraduate degrees, with the exception of lower initial purchase prices, yet maintaining consistency overall.
+
+```{r, echo=FALSE}
+options(scipen = 999)
+telco$CLV = predictions_data$CLV
+examine_data_telco<-head(telco, 24)
+ggplot(examine_data_telco,aes(x = CLV, color = ed))+
+labs(title = "CLV Density By Education Level")+
+geom_density()
+```
+**Figure: 4**
+
+Based on the findings, it appears that married individuals are the most valuable clients for long-term business success. They demonstrate consistent purchasing behavior over time, which is a positive indicator for business stability. Following closely are male customers, who also exhibit a consistent purchasing pattern. In terms of education, customers who did not complete high school tend to have a higher frequency of purchases. Additionally, customers with post-undergraduate degrees make high-value purchases, making them valuable for the business. Taking all factors into account, married males emerge as the most valuable clients due to their combined traits of consistency and high-value purchases.
+
+\newpage
+## Retention
+
+To compute the customer retention rate for the first year, I initially determined the churn rate and then multiplied it by the total number of customers (assuming the dataset covers all customers). This provided the number of customers at risk of churn. Next, I calculated the retention budget by multiplying the number of at-risk customers by our average CLV. Consequently, I found that the retention budget for one year would be 3,937,142 drams.
+
+```{r}
+churn_rate <- mean(predictions <= 12) #12 because for yearly estimation we need 12 months
+
+total_subscribers <- nrow(telco)
+
+at_risk_subscribers <- total_subscribers * churn_rate
+
+average_clv <- mean(telco$CLV)  
+
+retention_budget <- at_risk_subscribers * average_clv
+retention_budget
+```
+
+Recommendations for improving customer retention:
+To reduce the retention rate, it's crucial to segment at-risk customers. After segmentation, it's essential to assess whether these customers contribute significantly to the company's value. If they don't, it may not be cost-effective to allocate budget for retaining them. However, for at-risk customers who bring substantial value to the company, customized retention strategies should be devised. These strategies may include offering specialized plans catering to specific customer needs, such as providing unlimited internet for customers with high internet usage. Additionally, personalized offers and discounts can be extended to certain customer groups to enhance retention. Another effective strategy for maintaining consistent customer retention involves maintaining regular communication with customers throughout their tenure with the company. This can be achieved by periodically conducting satisfaction surveys or organizing events aimed at nurturing customer loyalty.
+
